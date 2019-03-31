@@ -16,6 +16,8 @@ def productStringSplit(string):
 def productBreakdown(stringLst):
     temDf=pd.DataFrame(columns=['Product_S' ,'Product_B','Product_C'])
     for count, val in enumerate(list(stringLst)):
+        if (count % 10000) == 0:
+            print(count)
         temDf.loc[count]=productStringSplit(val)
         
     return temDf
@@ -29,8 +31,8 @@ def dataClean(df, fname):
     
     return df
 
-fname='Customer Visits Interview Exercise Data.csv'
-cleanFname='Customer Visits Interview Exercise Data (cleaned).csv'
+fname='Customer_Visits_Interview_Exercise_Data.csv'
+cleanFname='Customer_Visits_Interview_Exercise_Data(cleaned).csv'
 
 df=pd.read_csv(fname)
 cleanedDf=dataClean(df,cleanFname)
