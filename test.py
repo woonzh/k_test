@@ -1,6 +1,5 @@
 import pandas as pd
 from datetime import datetime
-from dateutil import parser
 import matplotlib.pyplot as plt
 from plotly.offline import plot
 import plotly.graph_objs as go
@@ -10,6 +9,8 @@ import math
 from sklearn.cluster import KMeans
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
+import tensorflow as tf
+from tensorflow.contrib.tensorboard.plugins import projector
 
 def convertStringToTime(string):
     obj=datetime.strptime(string, '%d/%m/%Y')
@@ -116,6 +117,7 @@ def kmeans(df, clusters):
     km=KMeans(n_clusters=clusters)
     km.fit(df)
     km.predict(df)
+    
     labels=km.labels_
     
     fig = plt.figure(1, figsize=(7,7))
@@ -133,6 +135,8 @@ storer=storage()
 fname='Customer_Visits_Interview_Exercise_Data.csv'
 cleanFname='Customer_Visits_Interview_Exercise_Data(cleaned).csv'
 products=['Product_S' ,'Product_B','Product_C']
+filedir='logs'
+metadata = 'D:/stuff/test/keratis/logs/metadata.txt'
 
 fig = tools.make_subplots(rows=3,
                       cols=2,
@@ -154,7 +158,23 @@ emDf = employeeSplit(cleanedDf)
 
 #elbow_curve(emDf[['total_sold', 'days', 'unique_customers']])
 clusters=5
-labels=kmeans(emDf[['total_sold', 'days', 'unique_customers']], clusters)
+#labels=kmeans(emDf[['total_sold', 'days', 'unique_customers']], clusters)
+
+subDf=emDf[['total_sold', 'days', 'unique_customers']]
+data=subDf.values
+subDf.to_csv(metadata, sep='\t')
+
+tf_data = tf.Variable(data)
+
+with tf.Session() as sess:
+    saver = tf.train.Saver([tf_data])
+    sess.run(tf_data.initializer)
+    saver.save(sess, filedir+'/tf_data.ckpt')
+    config = projector.ProjectorConfig()
+    embedding = config.embeddings.add()
+    embedding.tensor_name = tf_data.name
+    embedding.metadata_path = metadata
+    projector.visualize_embeddings(tf.summary.FileWriter(filedir), config)
 
 
 ##-----daily plot for all 3 products-------
