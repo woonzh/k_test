@@ -136,7 +136,7 @@ fname='Customer_Visits_Interview_Exercise_Data.csv'
 cleanFname='Customer_Visits_Interview_Exercise_Data(cleaned).csv'
 products=['Product_S' ,'Product_B','Product_C']
 filedir='logs'
-metadata = 'D:/stuff/test/keratis/logs/metadata.txt'
+metadata = 'metadata.txt'
 
 fig = tools.make_subplots(rows=3,
                       cols=2,
@@ -162,7 +162,7 @@ clusters=5
 
 subDf=emDf[['total_sold', 'days', 'unique_customers']]
 data=subDf.values
-subDf.to_csv(metadata, sep='\t')
+subDf.to_csv(filedir+'/'+ metadata, sep='\t')
 
 tf_data = tf.Variable(data)
 
