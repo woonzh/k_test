@@ -11,6 +11,8 @@ from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.tensorboard.plugins import projector
+from sklearn.decomposition import PCA
+from sklearn import preprocessing
 
 def convertStringToTime(string):
     obj=datetime.strptime(string, '%d/%m/%Y')
@@ -96,9 +98,32 @@ def periodSplit(df, colName, row, col):
 
 def employeeSplit(df):
     emDf=df[['Anonymized_Employee_ID','Product_S', 'Product_B', 'Product_C', 'total_sold']].groupby(['Anonymized_Employee_ID']).sum()
-    emDf['days']=df[['Anonymized_Employee_ID','Date_of_Visit']].groupby(['Anonymized_Employee_ID']).count()
+    cols=['Product_S', 'Product_B', 'Product_C']
+    for col in cols:
+        emDf[col]=emDf[col]/emDf['total_sold']
+        emDf[col]=[round(x,2) for x in emDf[col]]
+        
+    emDf['first_day']=df[['Anonymized_Employee_ID','Date_of_Visit']].groupby(['Anonymized_Employee_ID']).Date_of_Visit.min()
+    emDf['last_day']=df[['Anonymized_Employee_ID','Date_of_Visit']].groupby(['Anonymized_Employee_ID']).Date_of_Visit.max()
+    tem = emDf['last_day']-emDf['first_day']
+    emDf['length(days)'] = [(x.days)+1 for x in tem]
+    emDf['days_with_sales']=df[['Anonymized_Employee_ID','Date_of_Visit']].groupby(['Anonymized_Employee_ID']).Date_of_Visit.nunique()
+    emDf['days_with_sales(percen)']=emDf['days_with_sales']/emDf['length(days)']
+    emDf['days_with_sales(percen)']=[round(x, 2) for x in emDf['days_with_sales(percen)']]
+    emDf['sales_per_day']=emDf['total_sold']/emDf['days_with_sales']
+    emDf['sales_per_day']=[round(x,2) for x in emDf['sales_per_day']]
     emDf['unique_customers']=df[['Anonymized_Employee_ID','Anonymized_Customer_ID']].groupby(['Anonymized_Employee_ID']).Anonymized_Customer_ID.nunique()
+    emDf['unique_customers(percen)']=emDf['unique_customers']/df[['Anonymized_Employee_ID','Anonymized_Customer_ID']].groupby(['Anonymized_Employee_ID']).Anonymized_Customer_ID.count()
     return emDf
+
+def PCATransform(df):
+    values=df.values
+    pca = PCA(n_components=3)
+    result=pca.fit_transform(values)
+    
+    min_max_scaler = preprocessing.StandardScaler()
+    result = min_max_scaler.fit_transform(result)
+    return result
 
 def elbow_curve(df):
     n_cluster = range(1, 20)
@@ -112,21 +137,23 @@ def elbow_curve(df):
     plt.title('Elbow Curve')
     plt.show()
     
-def kmeans(df, clusters):
+def kmeans(df, clusters, axislabels):    
     df.reset_index(drop=True)
     km=KMeans(n_clusters=clusters)
-    km.fit(df)
-    km.predict(df)
+    distance=np.min(km.fit_transform(df), axis=1)
+    labels=km.predict(df)
+    return labels,distance
     
-    labels=km.labels_
+#    labels=km.labels_
     
     fig = plt.figure(1, figsize=(7,7))
     ax = Axes3D(fig, rect=[0, 0, 0.95, 1], elev=48, azim=134)
     ax.scatter(df.iloc[:,0], df.iloc[:,1], df.iloc[:,2],
               c=labels.astype(np.float), edgecolor="k")
-    ax.set_xlabel("total sold")
-    ax.set_ylabel("days")
-    ax.set_zlabel("unique customers")
+    
+    ax.set_xlabel(axislabels[0])
+    ax.set_ylabel(axislabels[1])
+    ax.set_zlabel(axislabels[2])
     plt.title("K Means", fontsize=14);
     
     return labels
@@ -152,17 +179,30 @@ df=pd.read_csv(fname)
 
 cleanedDf=pd.read_csv(cleanFname)
 cleanedDf.columns=['Date_of_Visit', 'Product_List', 'Anonymized_Employee_ID', 'Anonymized_Customer_ID', 'Product_S', 'Product_B', 'Product_C', 'month', 'week', 'quarter']
+cleanedDf['Date_of_Visit'] =  pd.to_datetime(cleanedDf['Date_of_Visit'], format='%Y-%m-%d')
 cleanedDf['total_sold'] =cleanedDf['Product_S'] + cleanedDf['Product_B'] + cleanedDf['Product_C']
 
+
+##------machine learning for anomaly detection--------
 emDf = employeeSplit(cleanedDf)
 
-#elbow_curve(emDf[['total_sold', 'days', 'unique_customers']])
-clusters=5
-#labels=kmeans(emDf[['total_sold', 'days', 'unique_customers']], clusters)
+metadataDf=emDf[['Product_S', 'Product_B', 'Product_C', 'total_sold', 'length(days)', 'days_with_sales(percen)', 'sales_per_day', 'unique_customers', 'unique_customers(percen)']]
+subDf=emDf[['Product_S', 'Product_B', 'Product_C', 'sales_per_day', 'days_with_sales(percen)', 'unique_customers(percen)', 'length(days)']]
+#subDf=emDf[['total_sold', 'days', 'length(days)']]
 
-subDf=emDf[['total_sold', 'days', 'unique_customers']]
-data=subDf.values
-subDf.to_csv(filedir+'/'+ metadata, sep='\t')
+pcaDf=PCATransform(subDf)
+
+elbow_curve(pcaDf)
+clusters=10
+if len(list(subDf))>3:
+    axislabels=[1,2,3]
+else:
+    axislabels=list(subDf)
+    
+labels=kmeans(pd.DataFrame(pcaDf), clusters, axislabels)
+
+data=pcaDf
+metadataDf.to_csv(filedir+'/'+ metadata, sep='\t')
 
 tf_data = tf.Variable(data)
 
