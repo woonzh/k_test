@@ -13,6 +13,8 @@ import tensorflow as tf
 from tensorflow.contrib.tensorboard.plugins import projector
 from sklearn.decomposition import PCA
 from sklearn import preprocessing
+from scipy.stats import norm
+import scipy.stats
 
 def convertStringToTime(string):
     obj=datetime.strptime(string, '%d/%m/%Y')
@@ -137,19 +139,70 @@ def elbow_curve(df):
     plt.title('Elbow Curve')
     plt.show()
     
-def kmeans(df, clusters, axislabels):    
+def findDist(data):
+    dist_names = ["norm", "exponweib", "weibull_max", "weibull_min", "beta"]
+    dist_names = ["norm"]
+    
+    params = {}
+    dist_results=[]
+    
+    for dist_name in dist_names:
+        dist = getattr(scipy.stats, dist_name)
+        param = dist.fit(data)
+        params[dist_name] = param
+        D, p = scipy.stats.kstest(data, dist_name, args=param)
+        dist_results.append((dist_name, p))
+    
+    best_dist, best_p = (max(dist_results, key=lambda item: item[1]))
+    
+    return best_dist, params[best_dist]
+    
+def findAnomaly(labels, distance, threshold):
+    df=pd.DataFrame()
+    df['labels']=labels
+    df['distance']=distance
+    
+    unique_labels=set(labels)
+    
+    stats=[]
+    new_labels=[]
+    
+    for label in unique_labels:
+        subDf=df[df['labels']==label]
+
+        best_dist, params = findDist(subDf['distance'])
+        stats.append([best_dist, params])
+        
+        plt.hist(distance, bins=25, density=True, alpha=0.6)
+        title=str(label)+' ' +best_dist
+        plt.title(title)
+        plt.show()
+        
+    for count in range(len(df)):
+        label=df.iloc[count, 0]
+        dist=df.iloc[count,1]
+        distribution=getattr(scipy.stats, stats[label][0])
+        prob=distribution(stats[label][1][0], stats[label][1][1]).pdf(dist)
+        if prob<threshold:
+            new_labels.append(len(unique_labels))
+        else:
+            new_labels.append(label)
+    
+    return new_labels
+    
+    
+def kmeans(df, clusters, axislabels, threshold=0.1):    
     df.reset_index(drop=True)
     km=KMeans(n_clusters=clusters)
     distance=np.min(km.fit_transform(df), axis=1)
     labels=km.predict(df)
-    return labels,distance
     
-#    labels=km.labels_
+    labels=findAnomaly(labels, distance, threshold)
     
     fig = plt.figure(1, figsize=(7,7))
     ax = Axes3D(fig, rect=[0, 0, 0.95, 1], elev=48, azim=134)
     ax.scatter(df.iloc[:,0], df.iloc[:,1], df.iloc[:,2],
-              c=labels.astype(np.float), edgecolor="k")
+              c=labels, edgecolor="k")
     
     ax.set_xlabel(axislabels[0])
     ax.set_ylabel(axislabels[1])
@@ -183,40 +236,6 @@ cleanedDf['Date_of_Visit'] =  pd.to_datetime(cleanedDf['Date_of_Visit'], format=
 cleanedDf['total_sold'] =cleanedDf['Product_S'] + cleanedDf['Product_B'] + cleanedDf['Product_C']
 
 
-##------machine learning for anomaly detection--------
-emDf = employeeSplit(cleanedDf)
-
-metadataDf=emDf[['Product_S', 'Product_B', 'Product_C', 'total_sold', 'length(days)', 'days_with_sales(percen)', 'sales_per_day', 'unique_customers', 'unique_customers(percen)']]
-subDf=emDf[['Product_S', 'Product_B', 'Product_C', 'sales_per_day', 'days_with_sales(percen)', 'unique_customers(percen)', 'length(days)']]
-#subDf=emDf[['total_sold', 'days', 'length(days)']]
-
-pcaDf=PCATransform(subDf)
-
-elbow_curve(pcaDf)
-clusters=10
-if len(list(subDf))>3:
-    axislabels=[1,2,3]
-else:
-    axislabels=list(subDf)
-    
-labels=kmeans(pd.DataFrame(pcaDf), clusters, axislabels)
-
-data=pcaDf
-metadataDf.to_csv(filedir+'/'+ metadata, sep='\t')
-
-tf_data = tf.Variable(data)
-
-with tf.Session() as sess:
-    saver = tf.train.Saver([tf_data])
-    sess.run(tf_data.initializer)
-    saver.save(sess, filedir+'/tf_data.ckpt')
-    config = projector.ProjectorConfig()
-    embedding = config.embeddings.add()
-    embedding.tensor_name = tf_data.name
-    embedding.metadata_path = metadata
-    projector.visualize_embeddings(tf.summary.FileWriter(filedir), config)
-
-
 ##-----daily plot for all 3 products-------
 #dayCompiled=cleanedDf[['Date_of_Visit', 'Product_S', 'Product_B', 'Product_C']].groupby(['Date_of_Visit'], axis=0).sum()
 #linePlotly(dayCompiled, products, 1,1)
@@ -235,3 +254,37 @@ with tf.Session() as sess:
 #plotHtml('test.html')
 #data=storer.storeLogs
 
+##------machine learning for anomaly detection--------
+emDf = employeeSplit(cleanedDf)
+
+subDf=emDf[['Product_S', 'Product_B', 'Product_C', 'sales_per_day', 'days_with_sales(percen)', 'unique_customers(percen)', 'length(days)']]
+#subDf=emDf[['total_sold', 'days', 'length(days)']]
+
+pcaDf=PCATransform(subDf)
+
+elbow_curve(pcaDf)
+clusters=2
+if len(list(subDf))>3:
+    axislabels=[1,2,3]
+else:
+    axislabels=list(subDf)
+
+threshold=0.1
+labels=kmeans(pd.DataFrame(pcaDf), clusters, axislabels, threshold)
+emDf['label']=labels
+metadataDf=emDf[['label','Product_S', 'Product_B', 'Product_C', 'total_sold', 'length(days)', 'days_with_sales(percen)', 'sales_per_day', 'unique_customers', 'unique_customers(percen)']]
+
+data=pcaDf
+metadataDf.to_csv(filedir+'/'+ metadata, sep='\t')
+
+tf_data = tf.Variable(data)
+
+with tf.Session() as sess:
+    saver = tf.train.Saver([tf_data])
+    sess.run(tf_data.initializer)
+    saver.save(sess, filedir+'/tf_data.ckpt')
+    config = projector.ProjectorConfig()
+    embedding = config.embeddings.add()
+    embedding.tensor_name = tf_data.name
+    embedding.metadata_path = metadata
+    projector.visualize_embeddings(tf.summary.FileWriter(filedir), config)
